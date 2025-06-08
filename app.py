@@ -274,7 +274,6 @@ def file_upload():
     )
 
     if uploaded_file is not None:
-        # Validar archivo
         is_valid, message = validate_image_file(uploaded_file)
 
         if not is_valid:
@@ -282,7 +281,12 @@ def file_upload():
             return None
 
         st.success(f"✅ {message}")
+        st.session_state["uploaded_image"] = uploaded_file
         return Image.open(uploaded_file)
+
+    # Si ya había una imagen subida previamente
+    if "uploaded_image" in st.session_state:
+        return Image.open(st.session_state["uploaded_image"])
 
     return None
 
@@ -290,11 +294,9 @@ def file_upload():
 def main():
     """Función principal de la aplicación"""
 
-    # Título principal
     st.title("🎭 Detector de Emociones")
     st.markdown("---")
 
-    # Cargar modelos
     with st.spinner("Cargando modelos..."):
         model = load_emotion_model()
         face_cascade = load_face_cascade()
@@ -303,10 +305,8 @@ def main():
         st.error("No se pudieron cargar los modelos necesarios")
         return
 
-    # Limpiar archivos temporales
     cleanup_temp_files()
 
-    # Sidebar con información
     with st.sidebar:
         st.header("ℹ️ Información")
         st.markdown("""
@@ -325,18 +325,29 @@ def main():
         - **Eliminación automática:** 1 hora
         """)
 
-    # Pestañas para diferentes métodos de entrada
+    # Pestañas de entrada
     tab1, tab2 = st.tabs(["📁 Subir Archivo", "📷 Cámara"])
 
+    # Solo una fuente de imagen activa a la vez
     image = None
 
     with tab1:
-        image = file_upload()
+        if "uploaded_image" not in st.session_state:
+            uploaded = file_upload()
+            if uploaded:
+                st.session_state["uploaded_image"] = uploaded
+        if "uploaded_image" in st.session_state:
+            image = st.session_state["uploaded_image"]
 
     with tab2:
-        image = camera_capture()
+        if "camera_image" not in st.session_state:
+            captured = camera_capture()
+            if captured:
+                st.session_state["camera_image"] = captured
+        if "camera_image" in st.session_state:
+            image = st.session_state["camera_image"]
 
-    # Procesar imagen si está disponible
+    # Procesamiento si hay imagen
     if image is not None:
         col1, col2 = st.columns([1, 1])
 
@@ -347,23 +358,26 @@ def main():
 
         with col2:
             st.subheader("Análisis")
+            if "emotion_results" not in st.session_state:
+                with st.spinner("Analizando emociones..."):
+                    results = detect_emotion(image, model, face_cascade)
+                    st.session_state["emotion_results"] = results
 
-            with st.spinner("Analizando emociones..."):
-                # Detectar emociones
-                results = detect_emotion(image, model, face_cascade)
-
-                if results:
-                    st.success(f"✅ Se detectaron {len(results)} rostro(s)")
+                if st.session_state["emotion_results"]:
+                    st.success(
+                        f"✅ Se detectaron {len(st.session_state['emotion_results'])} rostro(s)")
                 else:
                     st.warning("⚠️ No se detectaron rostros")
 
         # Mostrar resultados
-        if results:
+        if st.session_state.get("emotion_results"):
             st.markdown("---")
-            display_results(image, results)
+            display_results(image, st.session_state["emotion_results"])
 
-        # Botón para limpiar
+        # Botón de limpieza total
         if st.button("🗑️ Limpiar Resultados", type="secondary"):
+            for key in ["camera_image", "uploaded_image", "emotion_results"]:
+                st.session_state.pop(key, None)
             st.rerun()
 
 
