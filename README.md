@@ -89,7 +89,6 @@ Instala las dependencias con:
 
 ```bash
 pip install streamlit opencv-python tensorflow pillow numpy
-pip install -r requirements.txt
 ```
 
 ## ▶️ Cómo ejecutar
