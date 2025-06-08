@@ -116,6 +116,16 @@ Si deseas cambiar el modelo, asegúrate de que:
 
 - Reciba imágenes con dimensiones (64, 64, 1), o ajusta el preprocesamiento.
 
+## DEMO
+
+### Desde galería
+
+![From Gallery](demos/from_gallery.gif)
+
+### Desde cámara
+
+![From Camera](demos/from_camera.gif)
+
 ## 🧠 Referencias
 
 - [📚 FER2013 Dataset](https://www.kaggle.com/datasets/msambare/fer2013)
