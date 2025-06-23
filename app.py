@@ -20,7 +20,7 @@ except ImportError:
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Detector de Emociones Avanzado",
+    page_title="Detector de Estado Emocional en Selfies",
     page_icon="🎭",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -272,7 +272,7 @@ def display_history():
 
 def main():
     """Función principal de la aplicación"""
-    st.title("🎭 Detector de Emociones Avanzado")
+    st.title("🎭 Detector de Estado Emocional en Selfies")
     st.markdown("---")
 
     with st.spinner("Cargando modelos..."):
@@ -286,6 +286,39 @@ def main():
         return
 
     cleanup_temp_files()
+    # Política y consentimiento
+    with st.expander("Política de Privacidad y Consentimiento Informado", expanded=False):
+        st.markdown("""
+        **"Detector de Estado Emocional en Selfies"**
+
+        **Fecha de Última Actualización:** 17 de junio de 2025
+
+        **Introducción:** Bienvenido/a a *Detector de Estado Emocional en Selfies*, una aplicación desarrollada por el Equipo 11 del ITESM. Nuestra aplicación analiza su expresión facial en selfies y proporciona retroalimentación sobre su estado emocional predominante.
+
+        En un mundo donde la privacidad es fundamental, nos comprometemos a manejar su información con responsabilidad y transparencia. Esta política detalla cómo recopilamos, usamos y protegemos sus datos.
+
+        1. **Responsable del Tratamiento:** ITESM (Equipo 11).
+        2. **Datos Recopilados:**  
+        - Selfies (datos biométricos sensibles, temporales).  
+        - Resultados de análisis emocional.  
+        - Datos técnicos no identificables.
+        3. **Finalidad:**  
+        - Análisis en tiempo real.  
+        - Mejora del modelo (anonimizado y agregado).  
+        - Optimización de la app.
+        4. **Base Legal:** Consentimiento explícito.
+        5. **Protección de Datos:**  
+        - Procesamiento temporal y eliminación inmediata de selfies.  
+        - Anonimización para mejora del modelo.  
+        - Medidas de seguridad robustas.
+        6. **Compartir Datos:** No compartimos selfies ni resultados identificables con terceros.
+        7. **Derechos:** Acceso, rectificación, supresión, oposición, limitación, portabilidad, retirada de consentimiento.
+        8. **Retención:** Selfies solo durante el análisis; resultados agregados pueden conservarse indefinidamente.
+        9. **Cambios:** La fecha de última actualización está al inicio.
+        10. **Contacto:** Para ejercer derechos, envíe solicitud por correo.
+
+        > **Disclaimer:** Esta herramienta no es un diagnóstico médico o psicológico. Para dudas sobre su salud emocional, consulte a un profesional.
+        """)
 
     # -- Consentimiento obligatorio antes de procesar imágenes --
     st.markdown("### 📝 Consentimiento de Uso de la Imagen")

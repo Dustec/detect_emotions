@@ -99,6 +99,10 @@ pip install streamlit opencv-python pillow numpy deepface
 
 ![Demo1](demos/check_box_consentimiento.gif)
 
+### Disclaimer UI
+
+![Demo1.1](demos/disclaimer.png)
+
 ### Historial
 
 ![Demo2](demos/historial.gif)
