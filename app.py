@@ -7,14 +7,21 @@ import os
 import time
 from datetime import datetime, timedelta
 import threading
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing.image import img_to_array
-import tensorflow as tf
+import pandas as pd
+import hashlib
+import io
+
+# Intentar importar DeepFace (modelo de alta precisión)
+try:
+    from deepface import DeepFace
+    DEEPFACE_AVAILABLE = True
+except ImportError:
+    DEEPFACE_AVAILABLE = False
 
 # Configuración de la página
 st.set_page_config(
-    page_title="Detector de Emociones",
-    page_icon="😊",
+    page_title="Detector de Emociones Avanzado",
+    page_icon="🎭",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -23,37 +30,82 @@ st.set_page_config(
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 ALLOWED_EXTENSIONS = ['jpg', 'jpeg', 'png']
 TEMP_DIR = tempfile.gettempdir()
-RETENTION_HOURS = 1  # Eliminación automática después de 1 hora
+RETENTION_HOURS = 1
 
-# Tipología de emociones con emojis
-EMOTION_LABELS = {
-    0: {"name": "Angry", "emoji": "😠", "color": "#FF6B6B"},
-    1: {"name": "Disgust", "emoji": "🤢", "color": "#A8E6CF"},
-    2: {"name": "Fear", "emoji": "😨", "color": "#FFB347"},
-    3: {"name": "Happy", "emoji": "😊", "color": "#FFD93D"},
-    4: {"name": "Neutral", "emoji": "😐", "color": "#C7C7C7"},
-    5: {"name": "Sad", "emoji": "😢", "color": "#87CEEB"},
-    6: {"name": "Surprise", "emoji": "😲", "color": "#DDA0DD"}
+# Mapeo de emociones para DeepFace
+DEEPFACE_EMOTIONS = {
+    'angry': {"name": "Angry", "emoji": "😠", "color": "#FF6B6B"},
+    'disgust': {"name": "Disgust", "emoji": "🤢", "color": "#A8E6CF"},
+    'fear': {"name": "Fear", "emoji": "😨", "color": "#FFB347"},
+    'happy': {"name": "Happy", "emoji": "😊", "color": "#FFD93D"},
+    'neutral': {"name": "Neutral", "emoji": "😐", "color": "#C7C7C7"},
+    'sad': {"name": "Sad", "emoji": "😢", "color": "#87CEEB"},
+    'surprise': {"name": "Surprise", "emoji": "😲", "color": "#DDA0DD"}
 }
 
 
 @st.cache_resource
 def load_emotion_model():
-    """Carga el modelo entrenado para detección de emociones (evita errores de compatibilidad)"""
-    try:
-        model_path = "emotion_model.h5"
-
-        # Evitar error de 'lr' usando compile=False
-        model = load_model(model_path, compile=False)
-
-        # Compilar manualmente (no importa el optimizador en inferencia)
-        model.compile(optimizer='adam',
-                      loss='categorical_crossentropy', metrics=['accuracy'])
-
-        return model
-    except Exception as e:
-        st.error(f"Error al cargar el modelo preentrenado: {str(e)}")
+    """Carga el modelo apropiado según disponibilidad"""
+    if DEEPFACE_AVAILABLE:
+        placeholder = st.empty()
+        with placeholder:
+            st.success("✅ Usando DeepFace (Alta precisión)")
+            time.sleep(3)
+        placeholder.empty()
+        return "deepface"
+    else:
+        st.error("❌ No hay modelos disponibles. Instale deepface o tensorflow.")
         return None
+
+
+def get_image_hash(image):
+    """Genera un hash único para la imagen para detectar cambios"""
+    try:
+        if isinstance(image, Image.Image):
+            img_bytes = io.BytesIO()
+            image.save(img_bytes, format='PNG')
+            img_bytes = img_bytes.getvalue()
+        else:
+            img_bytes = image.getbuffer().tobytes()
+        return hashlib.md5(img_bytes).hexdigest()
+    except:
+        return str(time.time())
+
+
+def detect_emotion_deepface(image_path):
+    """Detecta emociones usando DeepFace (alta precisión)"""
+    try:
+        result = DeepFace.analyze(
+            img_path=image_path,
+            actions=['emotion'],
+            enforce_detection=False,
+            detector_backend='opencv',
+            silent=True
+        )
+        results = []
+        iterable = result if isinstance(result, list) else [result]
+        for face_data in iterable:
+            emotion_scores = face_data['emotion']
+            dominant_emotion = face_data['dominant_emotion']
+            region = face_data.get('region', {})
+            bbox = (
+                region.get('x', 0),
+                region.get('y', 0),
+                region.get('w', 100),
+                region.get('h', 100)
+            )
+            results.append({
+                'bbox': bbox,
+                'emotion': dominant_emotion,
+                'confidence': emotion_scores[dominant_emotion] / 100.0,
+                'all_emotions': emotion_scores,
+                'method': 'deepface'
+            })
+        return results
+    except Exception as e:
+        st.error(f"Error en DeepFace: {str(e)}")
+        return []
 
 
 @st.cache_resource
@@ -62,7 +114,7 @@ def load_face_cascade():
     try:
         return cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     except Exception as e:
-        st.error(f"Error al cargar el detector de rostros: {str(e)}")
+        st.error(f"Error al cargar detector de rostros: {str(e)}")
         return None
 
 
@@ -70,97 +122,12 @@ def validate_image_file(uploaded_file):
     """Valida el archivo de imagen subido"""
     if uploaded_file is None:
         return False, "No se ha seleccionado ningún archivo"
-
-    # Validar extensión
-    file_extension = uploaded_file.name.split('.')[-1].lower()
-    if file_extension not in ALLOWED_EXTENSIONS:
+    ext = uploaded_file.name.split('.')[-1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
         return False, f"Formato no permitido. Use: {', '.join(ALLOWED_EXTENSIONS)}"
-
-    # Validar tamaño
     if uploaded_file.size > MAX_FILE_SIZE:
-        return False, f"Archivo muy grande. Máximo permitido: {MAX_FILE_SIZE // (1024*1024)}MB"
-
+        return False, f"Archivo muy grande. Máximo: {MAX_FILE_SIZE // (1024*1024)}MB"
     return True, "Archivo válido"
-
-
-def preprocess_face(face_img):
-    """Preprocesa la imagen del rostro para el modelo preentrenado de 64x64"""
-    try:
-        # Convertir a escala de grises si tiene 3 canales
-        if len(face_img.shape) == 3 and face_img.shape[2] == 3:
-            face_img = cv2.cvtColor(face_img, cv2.COLOR_BGR2GRAY)
-
-        # Redimensionar a 64x64
-        face_img = cv2.resize(face_img, (64, 64))
-
-        # Normalizar
-        face_img = face_img.astype('float32') / 255.0
-
-        # Expandir dims
-        face_img = np.expand_dims(face_img, axis=-1)  # (64, 64, 1)
-        face_img = np.expand_dims(face_img, axis=0)   # (1, 64, 64, 1)
-
-        return face_img
-    except Exception as e:
-        st.error(f"Error en preprocesamiento: {str(e)}")
-        return None
-
-
-def detect_emotion(image, model, face_cascade):
-    """Detecta emociones en la imagen"""
-    try:
-        # Convertir PIL a OpenCV
-        if isinstance(image, Image.Image):
-            image = np.array(image)
-
-        # Convertir RGB a BGR para OpenCV
-        if len(image.shape) == 3 and image.shape[2] == 3:
-            image_bgr = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-        else:
-            image_bgr = image
-
-        # Convertir a escala de grises para detección de rostros
-        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-
-        # Detectar rostros
-        faces = face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=1.1,
-            minNeighbors=5,
-            minSize=(30, 30)
-        )
-
-        results = []
-
-        for (x, y, w, h) in faces:
-            # Extraer rostro
-            face_roi = gray[y:y+h, x:x+w]
-
-            # Preprocesar
-            processed_face = preprocess_face(face_roi)
-
-            if processed_face is not None:
-                prediction = model.predict(processed_face, verbose=0)
-                prediction = prediction[0]  # shape: (7,)
-
-                # Asegurar que prediction sea un array
-                if isinstance(prediction, list):
-                    prediction = np.array(prediction)
-
-                emotion_idx = np.argmax(prediction)
-                confidence = float(np.max(prediction))
-
-                results.append({
-                    'bbox': (x, y, w, h),
-                    'emotion': emotion_idx,
-                    'confidence': confidence,
-                    'prediction': prediction
-                })
-
-        return results
-    except Exception as e:
-        st.error(f"Error en detección de emociones: {str(e)}")
-        return []
 
 
 def create_temp_file(uploaded_file):
@@ -169,10 +136,8 @@ def create_temp_file(uploaded_file):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         temp_filename = f"emotion_temp_{timestamp}_{uploaded_file.name}"
         temp_path = os.path.join(TEMP_DIR, temp_filename)
-
         with open(temp_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
-
         return temp_path
     except Exception as e:
         st.error(f"Error al crear archivo temporal: {str(e)}")
@@ -182,202 +147,251 @@ def create_temp_file(uploaded_file):
 def cleanup_temp_files():
     """Limpia archivos temporales antiguos"""
     try:
-        current_time = datetime.now()
-        for filename in os.listdir(TEMP_DIR):
-            if filename.startswith("emotion_temp_"):
-                file_path = os.path.join(TEMP_DIR, filename)
-                file_time = datetime.fromtimestamp(os.path.getctime(file_path))
-                if current_time - file_time > timedelta(hours=RETENTION_HOURS):
-                    os.remove(file_path)
-    except Exception as e:
-        pass  # Silenciar errores de limpieza
+        now = datetime.now()
+        for fname in os.listdir(TEMP_DIR):
+            if fname.startswith("emotion_temp_"):
+                path = os.path.join(TEMP_DIR, fname)
+                created = datetime.fromtimestamp(os.path.getctime(path))
+                if now - created > timedelta(hours=RETENTION_HOURS):
+                    os.remove(path)
+    except Exception:
+        pass
 
 
-def display_results(image, results):
-    """Muestra los resultados de detección"""
+def display_results(image, results, use_expanders=True):
+    """Muestra los resultados de detección con imagen reducida a 250x250"""
     if not results:
         st.warning("No se detectaron rostros en la imagen")
         return
+    annotated = np.array(image.copy())
+    for res in results:
+        x, y, w, h = res['bbox']
+        emo = res['emotion']
+        conf = res['confidence']
+        data = DEEPFACE_EMOTIONS.get(
+            emo, {"name": emo.title(), "emoji": "🤖", "color": "#808080"})
+        cv2.rectangle(annotated, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        label = f"{data['name']} ({conf:.1%})"
+        cv2.putText(annotated, label, (x, y-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    # Mostrar imagen anotada en 250px de ancho
+    st.image(annotated, caption="Emociones Detectadas", width=250)
 
-    # Crear imagen con anotaciones
-    annotated_image = np.array(image.copy())
+    st.subheader("🎭 Análisis Detallado de Emociones")
+    for i, res in enumerate(results):
+        if use_expanders:
+            with st.expander(f"👤 Rostro {i+1}", expanded=True):
+                _render_emotion_detail(res, i)
+        else:
+            st.markdown(f"### 👤 Rostro {i+1}")
+            _render_emotion_detail(res, i)
 
-    for i, result in enumerate(results):
-        x, y, w, h = result['bbox']
-        emotion_idx = result['emotion']
-        confidence = result['confidence']
 
-        emotion_data = EMOTION_LABELS[emotion_idx]
-
-        # Dibujar rectángulo
-        cv2.rectangle(annotated_image, (x, y), (x+w, y+h), (255, 0, 0), 2)
-
-        # Agregar etiqueta
-        label = f"{emotion_data['name']} ({confidence:.1%})"
-        cv2.putText(annotated_image, label, (x, y-10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-
-    # Mostrar imagen anotada
-    st.image(annotated_image, caption="Emociones Detectadas",
-             use_container_width=True)
-
-    # Mostrar resultados detallados
-    st.subheader("Emociones Detectadas:")
-
-    for i, result in enumerate(results):
-        emotion_idx = result['emotion']
-        confidence = result['confidence']
-        emotion_data = EMOTION_LABELS[emotion_idx]
-
-        col1, col2, col3 = st.columns([1, 2, 3])
-
-        with col1:
-            st.markdown(f"<div style='font-size: 48px; text-align: center;'>{emotion_data['emoji']}</div>",
-                        unsafe_allow_html=True)
-
-        with col2:
-            st.markdown(f"**{emotion_data['name']}**")
-            st.markdown(f"Confianza: {confidence:.1%}")
-
-        with col3:
-            # Mostrar distribución de probabilidades
-            for j, prob in enumerate(result['prediction']):
-                emotion_name = EMOTION_LABELS[j]['name']
-                st.progress(float(prob), text=f"{emotion_name}: {prob:.1%}")
+def _render_emotion_detail(res, i):
+    """Subrutina para mostrar los detalles de emoción"""
+    emo = res['emotion']
+    conf = res['confidence']
+    data = DEEPFACE_EMOTIONS.get(
+        emo, {"name": emo.title(), "emoji": "🤖", "color": "#808080"})
+    col1, col2, col3 = st.columns([1, 2, 4])
+    with col1:
+        st.markdown(
+            f"<div style='font-size:48px;text-align:center'>{data['emoji']}</div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown(f"**{data['name']}**")
+        st.markdown(f"Confianza: **{conf:.1%}**")
+    with col3:
+        st.markdown("**Distribución de Emociones:**")
+        df = pd.DataFrame([{
+            "Emoción": DEEPFACE_EMOTIONS.get(k, {"name": k.title()})["name"],
+            "Probabilidad": v/100.0,
+            "Emoji": DEEPFACE_EMOTIONS.get(k, {"emoji": "🤖"})["emoji"]
+        } for k, v in res['all_emotions'].items()]).sort_values('Probabilidad', ascending=False)
+        for _, row in df.iterrows():
+            st.progress(
+                row['Probabilidad'], text=f"{row['Emoji']} {row['Emoción']}: {row['Probabilidad']:.1%}")
 
 
 def camera_capture():
     """Interfaz para captura desde cámara"""
     st.subheader("📷 Captura desde Cámara")
-
-    camera_image = st.camera_input("Toma una foto para analizar emociones")
-
-    if camera_image is not None:
-        st.session_state["camera_image"] = camera_image
-        return Image.open(camera_image)
-
-    # Si ya había una foto tomada anteriormente (evita que se borre al cambiar de pestaña)
+    cam = st.camera_input("Toma una foto para analizar emociones")
+    if cam:
+        st.session_state["camera_image"] = cam
+        return Image.open(cam)
     if "camera_image" in st.session_state:
         return Image.open(st.session_state["camera_image"])
-
     return None
 
 
 def file_upload():
     """Interfaz para subida de archivos"""
     st.subheader("📁 Seleccionar Archivo")
-
-    uploaded_file = st.file_uploader(
+    up = st.file_uploader(
         "Selecciona una imagen",
         type=ALLOWED_EXTENSIONS,
-        help=f"Formatos permitidos: {', '.join(ALLOWED_EXTENSIONS)}. Tamaño máximo: {MAX_FILE_SIZE // (1024*1024)}MB"
+        help=f"Formatos: {', '.join(ALLOWED_EXTENSIONS)}; Máx: {MAX_FILE_SIZE//(1024*1024)}MB"
     )
-
-    if uploaded_file is not None:
-        is_valid, message = validate_image_file(uploaded_file)
-
-        if not is_valid:
-            st.error(f"❌ {message}")
+    if up:
+        valid, msg = validate_image_file(up)
+        if not valid:
+            st.error(f"❌ {msg}")
             return None
-
-        st.success(f"✅ {message}")
-        st.session_state["uploaded_image"] = uploaded_file
-        return Image.open(uploaded_file)
-
-    # Si ya había una imagen subida previamente
+        st.success(f"✅ {msg}")
+        st.session_state["uploaded_image"] = up
+        return Image.open(up)
     if "uploaded_image" in st.session_state:
         return Image.open(st.session_state["uploaded_image"])
-
     return None
+
+
+def save_to_history(image, results):
+    """Guarda la imagen procesada y sus resultados en el historial"""
+    if "history" not in st.session_state:
+        st.session_state["history"] = []
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    st.session_state["history"].insert(0, {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "image_data": buf.getvalue(),
+        "results": results
+    })
+
+
+def display_history():
+    """Muestra el historial de análisis anteriores"""
+    if not st.session_state.get("history"):
+        st.info("📭 No hay imágenes en el historial aún.")
+        return
+    st.markdown("## 🕓 Historial de Análisis")
+    for idx, entry in enumerate(st.session_state["history"]):
+        with st.expander(f"🖼️ Análisis #{idx+1} - {entry['timestamp']}", expanded=False):
+            display_results(Image.open(io.BytesIO(entry["image_data"])),
+                            entry["results"], use_expanders=False)
 
 
 def main():
     """Función principal de la aplicación"""
-
-    st.title("🎭 Detector de Emociones")
+    st.title("🎭 Detector de Emociones Avanzado")
     st.markdown("---")
 
     with st.spinner("Cargando modelos..."):
         model = load_emotion_model()
-        face_cascade = load_face_cascade()
+        face_cascade = load_face_cascade() if model != "deepface" else None
 
-    if model is None or face_cascade is None:
-        st.error("No se pudieron cargar los modelos necesarios")
+    if model is None:
+        st.error("❌ No se pudieron cargar los modelos necesarios")
+        st.info(
+            "💡 Para obtener la máxima precisión, instale DeepFace: `pip install deepface`")
         return
 
     cleanup_temp_files()
 
+    # -- Consentimiento obligatorio antes de procesar imágenes --
+    st.markdown("### 📝 Consentimiento de Uso de la Imagen")
+    consentimiento = st.checkbox(
+        "He leído y acepto que mi foto sea usada únicamente para el análisis de emociones",
+        key="consentimiento"
+    )
+    if not consentimiento:
+        st.warning("🔒 Debes otorgar tu consentimiento para continuar.")
+        st.stop()
+    # ----------------------------------------------------------
+
     with st.sidebar:
         st.header("ℹ️ Información")
         st.markdown("""
-        ### Emociones Detectadas:
-        - 😊 **Happy** - Felicidad
-        - 😢 **Sad** - Tristeza  
-        - 😠 **Angry** - Enojo
-        - 😨 **Fear** - Miedo
-        - 😲 **Surprise** - Sorpresa
-        - 🤢 **Disgust** - Asco
-        - 😐 **Neutral** - Neutral
+        ### 🎭 Emociones Detectadas:
+        - 😊 **Happy**
+        - 😢 **Sad**
+        - 😠 **Angry**
+        - 😨 **Fear**
+        - 😲 **Surprise**
+        - 🤢 **Disgust**
+        - 😐 **Neutral**
         
-        ### Especificaciones:
+        ### 📋 Especificaciones:
         - **Formatos:** JPG, JPEG, PNG
         - **Tamaño máximo:** 5MB
         - **Eliminación automática:** 1 hora
         """)
+        st.markdown("---")
+        display_history()
+        with st.expander("ℹ️ Modelos Disponibles", expanded=False):
+            st.markdown("""
+            **🔬 DeepFace (Alta Precisión)**
+            ```bash
+            pip install deepface
+            ```
+            """)
 
-    # Pestañas de entrada
-    tab1, tab2 = st.tabs(["📁 Subir Archivo", "📷 Cámara"])
+    tabs = ["📁 Subir Archivo", "📷 Cámara"]
+    sel = st.selectbox("Selecciona la fuente de entrada", tabs,
+                       index=0 if st.session_state.get("active_tab") != "📷 Cámara" else 1)
+    if st.session_state.get("active_tab") != sel:
+        for k in ["camera_image", "uploaded_image", "emotion_results", "last_image_hash", "last_image_source"]:
+            st.session_state.pop(k, None)
+        st.session_state["active_tab"] = sel
+        st.rerun()
 
-    # Solo una fuente de imagen activa a la vez
     image = None
+    temp_path = None
+    src = None
 
-    with tab1:
-        if "uploaded_image" not in st.session_state:
-            uploaded = file_upload()
-            if uploaded:
-                st.session_state["uploaded_image"] = uploaded
-        if "uploaded_image" in st.session_state:
-            image = st.session_state["uploaded_image"]
+    if sel == "📁 Subir Archivo":
+        img = file_upload()
+        if img:
+            image = img
+            src = "uploaded"
+            st.session_state.pop("camera_image", None)
+            if model == "deepface":
+                temp_path = create_temp_file(
+                    st.session_state["uploaded_image"])
+    else:
+        img = camera_capture()
+        if img:
+            image = img
+            src = "camera"
+            st.session_state.pop("uploaded_image", None)
+            if model == "deepface":
+                temp_path = create_temp_file(st.session_state["camera_image"])
 
-    with tab2:
-        if "camera_image" not in st.session_state:
-            captured = camera_capture()
-            if captured:
-                st.session_state["camera_image"] = captured
-        if "camera_image" in st.session_state:
-            image = st.session_state["camera_image"]
+    if image:
+        cur_hash = get_image_hash(image)
+        changed = False
+        if (st.session_state.get("last_image_hash") != cur_hash or
+                st.session_state.get("last_image_source") != src):
+            changed = True
+            st.session_state["last_image_hash"] = cur_hash
+            st.session_state["last_image_source"] = src
+            st.session_state.pop("emotion_results", None)
 
-    # Procesamiento si hay imagen
-    if image is not None:
-        col1, col2 = st.columns([1, 1])
-
-        with col1:
-            st.subheader("Imagen Original")
-            st.image(image, caption="Imagen a analizar",
-                     use_container_width=True)
-
-        with col2:
-            st.subheader("Análisis")
-            if "emotion_results" not in st.session_state:
-                with st.spinner("Analizando emociones..."):
-                    results = detect_emotion(image, model, face_cascade)
-                    st.session_state["emotion_results"] = results
-
-                if st.session_state["emotion_results"]:
-                    st.success(
-                        f"✅ Se detectaron {len(st.session_state['emotion_results'])} rostro(s)")
+        st.subheader("🔍 Análisis")
+        if "emotion_results" not in st.session_state or changed:
+            with st.spinner("🧠 Analizando emociones..."):
+                if model == "deepface" and temp_path:
+                    res = detect_emotion_deepface(temp_path)
                 else:
-                    st.warning("⚠️ No se detectaron rostros")
+                    res = []
+                st.session_state["emotion_results"] = res
 
-        # Mostrar resultados
-        if st.session_state.get("emotion_results"):
+        if st.session_state["emotion_results"]:
+            st.success(
+                f"✅ {len(st.session_state['emotion_results'])} rostro(s) detectado(s)")
+        else:
+            st.warning("⚠️ No se detectaron rostros")
+
+        if st.session_state["emotion_results"]:
             st.markdown("---")
             display_results(image, st.session_state["emotion_results"])
+            if changed:
+                save_to_history(image, st.session_state["emotion_results"])
 
-        # Botón de limpieza total
         if st.button("🗑️ Limpiar Resultados", type="secondary"):
-            for key in ["camera_image", "uploaded_image", "emotion_results"]:
-                st.session_state.pop(key, None)
+            for k in ["camera_image", "uploaded_image", "emotion_results", "last_image_hash", "last_image_source"]:
+                st.session_state.pop(k, None)
+            if temp_path and os.path.exists(temp_path):
+                os.remove(temp_path)
             st.rerun()
 
 
